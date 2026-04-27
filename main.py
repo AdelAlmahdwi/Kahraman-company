@@ -1,67 +1,65 @@
 import telebot
 from telebot import types
+import sqlite3
 from datetime import datetime
+import os
+from flask import Flask
+from threading import Thread
 
-# --- إعدادات التوكن ---
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+# --- إعداد السيرفر الوهمي لـ Render ---
+app = Flask('')
+@app.route('/')
+def home(): return "كهرمان بوت يعمل بنجاح!"
+def run(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+def keep_alive(): Thread(target=run).start()
+
+# --- إعدادات البوت وقاعدة البيانات ---
+TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 bot = telebot.TeleBot(TOKEN)
+DB_NAME = "ghahraman_data.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # جدول المنتجات (بكل تفاصيل كود أمس)
+    c.execute('''CREATE TABLE IF NOT EXISTS products 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, photo TEXT, code TEXT, 
+                  color TEXT, size TEXT, qty INTEGER, material TEXT, sell_price REAL, store TEXT,
+                  sold INTEGER DEFAULT 0, returned INTEGER DEFAULT 0, delivery INTEGER DEFAULT 0)''')
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # --- نظام الصلاحيات ---
 ADMIN_ID = 6719487107
-MGR_PRODUCTION = [6719487107]
-MGR_STOCK = [6719487107]
-# أضف هنا IDs موظفي المبيعات لكل متجر
-STAFF_STORE_1 = [] 
-STAFF_STORE_2 = []
+user_steps = {}
 
-# --- قواعد البيانات المؤقتة ---
-products_db = [] 
-orders_db = []   
-user_steps = {}  
-
-# --- ثوابت حالات الطلبيات ---
-STATUS_WAITING_PREP = "🟡 في انتظار التجهيز"
-STATUS_WAITING_PICKUP = "🚛 في انتظار الإرسال"
-STATUS_OUT_OF_STOCK = "🔴 انتهت من المخزون"
-STATUS_IN_DELIVERY = "🛣️ قيد التوصيل"
-STATUS_DELIVERED_UNPAID = "💰 تم التوصيل ولم تحصل"
-STATUS_RETURNING = "🔄 قيد الإرجاع"
-STATUS_ARCHIVED = "✅ الأرشيف"
-
-# --- دالة فحص الإلغاء (المفتاح السحري) ---
+# --- دالة فحص الإلغاء ---
 def is_cancelled(message):
-    if message.text == '🔙 العودة' or message.text == 'إلغاء':
+    if message.text in ['🔙 العودة', 'إلغاء']:
         user_steps.pop(message.from_user.id, None)
-        bot.send_message(message.chat.id, "🛑 تم إلغاء العملية والعودة للقائمة.", 
-                         reply_markup=main_menu(message.from_user.id))
+        bot.send_message(message.chat.id, "🛑 تم إلغاء العملية.", reply_markup=main_menu(message.from_user.id))
         return True
     return False
 
 # --- القائمة الرئيسية ---
 def main_menu(uid):
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    if uid in MGR_PRODUCTION or uid == ADMIN_ID:
-        markup.add('🏭 قسم التصنيع')
-    markup.add('📦 قسم المخزون', '🛒 قسم المبيعات')
-    markup.add('💰 قسم الحسابات', '📊 التقارير')
+    markup.add('🏭 قسم التصنيع', '📦 قسم المخزون')
+    markup.add('🛒 قسم المبيعات', '💰 قسم الحسابات')
+    markup.add('📊 التقارير')
     return markup
 
 @bot.message_handler(commands=['start'])
 def welcome(message):
-    uid = message.from_user.id
-    bot.send_message(message.chat.id, "مرحباً بك في منظومة قهرمان المتكاملة 🏭📦🛒", 
-                     reply_markup=main_menu(uid))
+    bot.send_message(message.chat.id, "مرحباً بك في منظومة قهرمان (النسخة الدائمة) 🏭📦", 
+                     reply_markup=main_menu(message.from_user.id))
 
 # ==========================================
-# 1. قسم التصنيع (مع ميزة الإلغاء)
+# 1. قسم التصنيع (نفس تسلسل أمس تماماً)
 # ==========================================
 @bot.message_handler(func=lambda m: m.text == '🏭 قسم التصنيع')
-def manufacturing_menu(message):
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add('➕ إضافة منتج جديد', '🔍 مراجعة منتج تم تصنيعه', '🔙 العودة')
-    bot.send_message(message.chat.id, "إدارة التصنيع:", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == '➕ إضافة منتج جديد')
 def add_prod_start(message):
     user_steps[message.from_user.id] = {}
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True).add('🔙 العودة')
@@ -75,14 +73,11 @@ def get_prod_photo(message):
     bot.register_next_step_handler(message, get_prod_code)
 
 def get_prod_code(message):
-    # التحقق من النص قبل نوع المحتوى للسماح بالعودة
     if message.content_type == 'text' and is_cancelled(message): return
-    
     if message.content_type != 'photo':
-        bot.send_message(message.chat.id, "⚠️ يرجى إرسال صورة أو اضغط عودة.")
+        bot.send_message(message.chat.id, "⚠️ يرجى إرسال صورة!")
         bot.register_next_step_handler(message, get_prod_code)
         return
-        
     user_steps[message.from_user.id]['photo'] = message.photo[-1].file_id
     bot.send_message(message.chat.id, "🔢 كود المنتج:")
     bot.register_next_step_handler(message, get_prod_color)
@@ -107,142 +102,52 @@ def get_prod_qty(message):
 
 def get_prod_material(message):
     if is_cancelled(message): return
-    try:
-        user_steps[message.from_user.id]['qty'] = int(message.text)
-        bot.send_message(message.chat.id, "🛠️ خامة المادة المصنعة:")
-        bot.register_next_step_handler(message, get_prod_price)
-    except:
-        bot.send_message(message.chat.id, "⚠️ يرجى إدخال رقم صحيح!")
-        bot.register_next_step_handler(message, get_prod_material)
+    user_steps[message.from_user.id]['qty'] = int(message.text)
+    bot.send_message(message.chat.id, "🛠️ خامة المادة:")
+    bot.register_next_step_handler(message, get_prod_price)
 
 def get_prod_price(message):
     if is_cancelled(message): return
     user_steps[message.from_user.id]['material'] = message.text
-    bot.send_message(message.chat.id, "💵 سعر بيع القطعة (دينار):")
+    bot.send_message(message.chat.id, "💵 سعر البيع:")
     bot.register_next_step_handler(message, get_prod_store)
 
 def get_prod_store(message):
     if is_cancelled(message): return
-    try:
-        user_steps[message.from_user.id]['sell_price'] = float(message.text)
-        markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-        markup.add('متجر 1', 'متجر 2', '🔙 العودة')
-        bot.send_message(message.chat.id, "🏪 توجيه المنتج إلى:", reply_markup=markup)
-        bot.register_next_step_handler(message, save_product_final)
-    except:
-        bot.send_message(message.chat.id, "⚠️ يرجى إدخال سعر صحيح!")
-        bot.register_next_step_handler(message, get_prod_store)
+    user_steps[message.from_user.id]['price'] = float(message.text)
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True).add('متجر 1', 'متجر 2', '🔙 العودة')
+    bot.send_message(message.chat.id, "🏪 توجيه إلى:", reply_markup=markup)
+    bot.register_next_step_handler(message, save_final)
 
-def save_product_final(message):
+def save_final(message):
     if is_cancelled(message): return
-    data = user_steps[message.from_user.id]
-    data.update({
-        'store': message.text,
-        'sold': 0, 'returned': 0, 'delivery': 0, 'returning': 0,
-        'date': datetime.now().strftime("%Y-%m-%d")
-    })
-    products_db.append(data)
-    bot.send_message(message.chat.id, "✅ تم حفظ المنتج وتوزيعه للمخازن.", reply_markup=main_menu(message.from_user.id))
+    d = user_steps[message.from_user.id]
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''INSERT INTO products (category, photo, code, color, size, qty, material, sell_price, store) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
+              (d['category'], d['photo'], d['code'], d['color'], d['size'], d['qty'], d['material'], d['price'], message.text))
+    conn.commit()
+    conn.close()
+    bot.send_message(message.chat.id, "✅ تم حفظ المنتج في قاعدة البيانات بنجاح!", reply_markup=main_menu(message.from_user.id))
+    del user_steps[message.from_user.id]
 
 # ==========================================
-# 2. قسم المخزون
+# 2. قسم المخزون (استدعاء من قاعدة البيانات)
 # ==========================================
 @bot.message_handler(func=lambda m: m.text == '📦 قسم المخزون')
-def stock_menu(message):
-    uid = message.from_user.id
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    if uid == ADMIN_ID or uid in MGR_STOCK:
-        markup.add('المخزن الرئيسي', 'مخزن متجر 1', 'مخزن متجر 2')
-    elif uid in STAFF_STORE_1: markup.add('مخزن متجر 1')
-    markup.add('🔙 العودة')
-    bot.send_message(message.chat.id, "اختر المخزن:", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text in ['المخزن الرئيسي', 'مخزن متجر 1', 'مخزن متجر 2'])
 def view_stock(message):
-    store_name = message.text.replace('مخزن ', '')
-    items = products_db if store_name == 'المخزن الرئيسي' else [p for p in products_db if p['store'] == store_name]
-    
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT photo, code, category, qty FROM products")
+    items = c.fetchall()
+    conn.close()
     if not items:
-        bot.send_message(message.chat.id, "📦 المخزن فارغ حالياً.")
-        return
+        bot.send_message(message.chat.id, "المخزن فارغ.")
+    for item in items:
+        bot.send_photo(message.chat.id, item[0], caption=f"📸 كود: {item[1]}\nالصنف: {item[2]}\nالمتوفر: {item[3]}")
 
-    for p in items:
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton(f"📄 تفاصيل الكود: {p['code']}", callback_data=f"stk_{p['code']}"))
-        bot.send_photo(message.chat.id, p['photo'], caption=f"📸 كود: {p['code']}", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('stk_'))
-def show_stock_details(call):
-    code = call.data.split('_')[1]
-    p = next((i for i in products_db if i['code'] == code), None)
-    if p:
-        text = (f"📊 **بيانات المنتج ({p['code']}):**\n\n"
-                f"3️⃣ الاسم: {p['category']}\n4️⃣ المقاس: {p['size']}\n5️⃣ سعر البيع: {p['sell_price']} د.ل\n"
-                f"6️⃣ الخامة: {p['material']}\n7️⃣ اللون: {p['color']}\n8️⃣ المتوفر: {p['qty']}\n"
-                f"9️⃣ المباع: {p['sold']}\n🔟 المرجوع: {p['returned']}\n"
-                f"1️⃣1️⃣ قيد التوصيل: {p['delivery']}\n1️⃣2️⃣ قيد الإرجاع: {p['returning']}")
-        bot.send_message(call.message.chat.id, text)
-
-# ==========================================
-# 3. قسم المبيعات
-# ==========================================
-@bot.message_handler(func=lambda m: m.text == '🛒 قسم المبيعات')
-def sales_menu(message):
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add('➕ إضافة طلب جديد', '📦 مراجعة حالة الطلبيات', '🔍 البحث عن طلبية', '🔙 العودة')
-    bot.send_message(message.chat.id, "إدارة المبيعات:", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == '➕ إضافة طلب جديد')
-def new_order_start(message):
-    user_steps[message.from_user.id] = {
-        'order_id': len(orders_db) + 1,
-        'status': STATUS_WAITING_PREP,
-        'date': datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True).add('🔙 العودة')
-    bot.send_message(message.chat.id, "📸 أرسل سكرين الحجز:", reply_markup=markup)
-    bot.register_next_step_handler(message, get_order_screenshot)
-
-def get_order_screenshot(message):
-    if message.content_type == 'text' and is_cancelled(message): return
-    if message.content_type != 'photo':
-        bot.send_message(message.chat.id, "⚠️ يرجى إرسال صورة السكرين أو عودة.")
-        bot.register_next_step_handler(message, get_order_screenshot)
-        return
-    user_steps[message.from_user.id]['screenshot'] = message.photo[-1].file_id
-    bot.send_message(message.chat.id, "👤 اسم الزبون:")
-    bot.register_next_step_handler(message, get_order_cust)
-
-def get_order_cust(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['customer'] = message.text
-    bot.send_message(message.chat.id, "🔢 كود القطعة:")
-    bot.register_next_step_handler(message, get_order_item)
-
-def get_order_item(message):
-    if is_cancelled(message): return
-    code = message.text
-    item = next((p for p in products_db if p['code'] == code), None)
-    if item:
-        user_steps[message.from_user.id]['item_code'] = code
-        user_steps[message.from_user.id]['price'] = item['sell_price']
-        user_steps[message.from_user.id]['store'] = item['store']
-        
-        # تحديث فوري للمخزن
-        item['qty'] -= 1
-        item['delivery'] += 1
-        
-        orders_db.append(user_steps[message.from_user.id])
-        bot.send_message(message.chat.id, f"✅ تم الحجز بنجاح. رقم الطلبية: {user_steps[message.from_user.id]['order_id']}")
-        
-        if item['qty'] <= 3:
-            bot.send_message(ADMIN_ID, f"⚠️ تنبيه: المنتج {code} قارب على النفاد! المتبقي: {item['qty']}")
-    else:
-        bot.send_message(message.chat.id, "⚠️ الكود غير موجود! حاول مرة أخرى أو اضغط عودة.")
-        bot.register_next_step_handler(message, get_order_item)
-
-@bot.message_handler(func=lambda m: m.text == '🔙 العودة')
-def back_home(message):
-    bot.send_message(message.chat.id, "الرئيسية:", reply_markup=main_menu(message.from_user.id))
-
-bot.polling(none_stop=True)
+# --- التشغيل ---
+if __name__ == "__main__":
+    keep_alive()
+    bot.infinity_polling()
