@@ -5,10 +5,10 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- إعداد السيرفر لضمان عمله على Render ---
+# --- إعداد السيرفر لـ Render ---
 app = Flask('')
 @app.route('/')
-def home(): return "بوت قهرمان - قسم التصنيع يعمل!"
+def home(): return "بوت قهرمان - قسم التصنيع يعمل بدقة!"
 def run(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 def keep_alive(): Thread(target=run).start()
 
@@ -16,225 +16,204 @@ def keep_alive(): Thread(target=run).start()
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 
-# --- الصلاحيات وقاعدة البيانات المؤقتة ---
+# --- قاعدة البيانات والصلاحيات ---
 ADMIN_ID = 6719487107
 MANUFACTURING_STAFF = [6719487107] 
 products_db = [] 
-user_steps = {}
+user_data = {} # لتخزين الخطوات لكل مستخدم
 
-# --- دالة فحص الإلغاء ---
-def is_cancelled(message):
-    if message.text == '🔙 العودة':
-        user_steps.pop(message.from_user.id, None)
-        bot.send_message(message.chat.id, "🛑 تم إلغاء العملية.", reply_markup=main_menu())
-        return True
-    return False
-
-# --- القوائم الرئيسية ---
 def main_menu():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add('🏭 قسم التصنيع', '📦 قسم المخزون')
-    markup.add('🛒 قسم المبيعات', '💰 قسم الحسابات', '📊 التقارير')
+    markup.add('🛒 قسم المبيعات', '💰 قسم الحسابات')
     return markup
 
-def manufacturing_home():
+def manufacturing_menu():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add('➕ إضافة منتج جديد', '🔍 مراجعة منتج تم تصنيعه')
-    markup.add('🔙 العودة')
+    markup.add('🔙 العودة للقائمة الرئيسية')
     return markup
 
 @bot.message_handler(commands=['start'])
-def welcome(message):
-    bot.send_message(message.chat.id, "مرحباً بك في منظومة قهرمان المحدثة 🏭", reply_markup=main_menu())
+def start(message):
+    bot.send_message(message.chat.id, "مرحباً بك في منظومة قهرمان 🏭", reply_markup=main_menu())
 
-# ==========================================
-# دخول قسم التصنيع
-# ==========================================
 @bot.message_handler(func=lambda m: m.text == '🏭 قسم التصنيع')
-def enter_manuf(message):
+def manufacturing_section(message):
     if message.from_user.id in MANUFACTURING_STAFF or message.from_user.id == ADMIN_ID:
-        bot.send_message(message.chat.id, "إدارة التصنيع - اختر إجراء:", reply_markup=manufacturing_home())
+        bot.send_message(message.chat.id, "إدارة التصني Cervices:", reply_markup=manufacturing_menu())
     else:
-        bot.send_message(message.chat.id, "⚠️ عذراً، ليس لديك صلاحية دخول هذا القسم.")
+        bot.send_message(message.chat.id, "⚠️ لا تملك صلاحية.")
 
-# ==========================================
-# مسار إضافة منتج جديد (تعبئة يدوية)
-# ==========================================
+# --- بداية عملية إضافة منتج (خطوة بخطوة) ---
 @bot.message_handler(func=lambda m: m.text == '➕ إضافة منتج جديد')
-def start_add(message):
-    user_steps[message.from_user.id] = {}
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True).add('🔙 العودة')
-    bot.send_message(message.chat.id, "📸 1. أرسل صورة المنتج:", reply_markup=markup)
-    bot.register_next_step_handler(message, get_photo)
+def start_adding(message):
+    user_data[message.from_user.id] = {}
+    bot.send_message(message.chat.id, "1️⃣ أرسل صورة المنتج:")
+    bot.register_next_step_handler(message, process_photo)
 
-def get_photo(message):
-    if message.content_type == 'text' and is_cancelled(message): return
+def process_photo(message):
     if message.content_type != 'photo':
         bot.send_message(message.chat.id, "⚠️ يرجى إرسال صورة!")
-        bot.register_next_step_handler(message, get_photo)
+        bot.register_next_step_handler(message, process_photo)
         return
-    user_steps[message.from_user.id]['photo'] = message.photo[-1].file_id
-    bot.send_message(message.chat.id, "🏷️ 2. الصنف:")
-    bot.register_next_step_handler(message, get_category)
+    user_data[message.from_user.id]['photo'] = message.photo[-1].file_id
+    bot.send_message(message.chat.id, "2️⃣ أدخل (الصنف):")
+    bot.register_next_step_handler(message, process_category)
 
-def get_category(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['category'] = message.text
-    bot.send_message(message.chat.id, "🔢 3. كود المنتج:")
-    bot.register_next_step_handler(message, get_code)
+def process_category(message):
+    user_data[message.from_user.id]['category'] = message.text
+    bot.send_message(message.chat.id, "3️⃣ أدخل (كود المنتج):")
+    bot.register_next_step_handler(message, process_code)
 
-def get_code(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['code'] = message.text
-    bot.send_message(message.chat.id, "📦 4. عدد القطع:")
-    bot.register_next_step_handler(message, get_qty)
+def process_code(message):
+    user_data[message.from_user.id]['code'] = message.text
+    bot.send_message(message.chat.id, "4️⃣ أدخل (عدد القطع):")
+    bot.register_next_step_handler(message, process_qty)
 
-def get_qty(message):
-    if is_cancelled(message): return
+def process_qty(message):
+    user_data[message.from_user.id]['qty'] = int(message.text)
+    bot.send_message(message.chat.id, "5️⃣ تكلفة القماش:")
+    bot.register_next_step_handler(message, process_c1)
+
+def process_c1(message):
+    user_data[message.from_user.id]['c1'] = float(message.text)
+    bot.send_message(message.chat.id, "6️⃣ تكلفة الفازليين:")
+    bot.register_next_step_handler(message, process_c2)
+
+def process_c2(message):
+    user_data[message.from_user.id]['c2'] = float(message.text)
+    bot.send_message(message.chat.id, "7️⃣ تكلفة الأزرار:")
+    bot.register_next_step_handler(message, process_c3)
+
+def process_c3(message):
+    user_data[message.from_user.id]['c3'] = float(message.text)
+    bot.send_message(message.chat.id, "8️⃣ تكلفة الخياطة:")
+    bot.register_next_step_handler(message, process_c4)
+
+def process_c4(message):
+    user_data[message.from_user.id]['c4'] = float(message.text)
+    bot.send_message(message.chat.id, "9️⃣ تكلفة التطريز:")
+    bot.register_next_step_handler(message, process_c5)
+
+def process_c5(message):
+    user_data[message.from_user.id]['c5'] = float(message.text)
+    bot.send_message(message.chat.id, "🔟 تكلفة الملحقات:")
+    bot.register_next_step_handler(message, process_c6)
+
+def process_c6(message):
+    user_data[message.from_user.id]['c6'] = float(message.text)
+    bot.send_message(message.chat.id, "1️⃣1️⃣ تكلفة التصوير:")
+    bot.register_next_step_handler(message, process_c7)
+
+def process_c7(message):
+    user_data[message.from_user.id]['c7'] = float(message.text)
+    bot.send_message(message.chat.id, "1️⃣2️⃣ تاريخ التصنيع:")
+    bot.register_next_step_handler(message, process_date)
+
+def process_date(message):
+    user_data[message.from_user.id]['date'] = message.text
+    bot.send_message(message.chat.id, "1️⃣3️⃣ اسم المتجر:")
+    bot.register_next_step_handler(message, process_store)
+
+def process_store(message):
+    user_data[message.from_user.id]['store'] = message.text
+    bot.send_message(message.chat.id, "1️⃣4️⃣ خامة المادة المصنعة:")
+    bot.register_next_step_handler(message, process_material)
+
+def process_material(message):
+    user_data[message.from_user.id]['material'] = message.text
+    bot.send_message(message.chat.id, "💰 أخيراً، أدخل سعر بيع القطعة يدوياً:")
+    bot.register_next_step_handler(message, process_final_save)
+
+def process_final_save(message):
     try:
-        user_steps[message.from_user.id]['qty'] = int(message.text)
-        bot.send_message(message.chat.id, "💵 5. تكلفة القماش:")
-        bot.register_next_step_handler(message, get_cost1)
-    except:
-        bot.send_message(message.chat.id, "⚠️ يرجى إدخال رقم صحيح.")
-        bot.register_next_step_handler(message, get_qty)
-
-def get_cost1(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c1'] = float(message.text)
-    bot.send_message(message.chat.id, "💵 6. تكلفة الفازلين:")
-    bot.register_next_step_handler(message, get_cost2)
-
-def get_cost2(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c2'] = float(message.text)
-    bot.send_message(message.chat.id, "💵 7. تكلفة الأزرار:")
-    bot.register_next_step_handler(message, get_cost3)
-
-def get_cost3(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c3'] = float(message.text)
-    bot.send_message(message.chat.id, "💵 8. تكلفة الخياطة:")
-    bot.register_next_step_handler(message, get_cost4)
-
-def get_cost4(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c4'] = float(message.text)
-    bot.send_message(message.chat.id, "💵 9. تكلفة التطريز:")
-    bot.register_next_step_handler(message, get_cost5)
-
-def get_cost5(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c5'] = float(message.text)
-    bot.send_message(message.chat.id, "💵 10. تكلفة الملحقات:")
-    bot.register_next_step_handler(message, get_cost6)
-
-def get_cost6(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c6'] = float(message.text)
-    bot.send_message(message.chat.id, "💵 11. تكلفة التصوير:")
-    bot.register_next_step_handler(message, get_cost7)
-
-def get_cost7(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['c7'] = float(message.text)
-    bot.send_message(message.chat.id, "📅 12. تاريخ التصنيع (مثال: 2026-04-27):")
-    bot.register_next_step_handler(message, get_date)
-
-def get_date(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['date'] = message.text
-    bot.send_message(message.chat.id, "🏪 13. اسم المتجر:")
-    bot.register_next_step_handler(message, get_store)
-
-def get_store(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['store'] = message.text
-    bot.send_message(message.chat.id, "🧵 14. خامة المادة المصنعة:")
-    bot.register_next_step_handler(message, get_material)
-
-def get_material(message):
-    if is_cancelled(message): return
-    user_steps[message.from_user.id]['material'] = message.text
-    bot.send_message(message.chat.id, "💰 15. سعر بيع القطعة يدوياً (دينار):")
-    bot.register_next_step_handler(message, final_calc)
-
-def final_calc(message):
-    if is_cancelled(message): return
-    try:
-        sell_p = float(message.text)
-        d = user_steps[message.from_user.id]
+        sell_price = float(message.text)
+        data = user_data[message.from_user.id]
         
-        # الحسابات التلقائية
-        unit_cost = d['c1'] + d['c2'] + d['c3'] + d['c4'] + d['c5'] + d['c6'] + d['c7']
-        total_cost = unit_cost * d['qty']
-        total_sell = sell_p * d['qty']
-        unit_profit = sell_p - unit_cost
-        total_profit = unit_profit * d['qty']
-        
-        d.update({
-            'sell_p': sell_p, 'unit_cost': unit_cost, 'total_cost': total_cost,
-            'total_sell': total_sell, 'unit_profit': unit_profit, 'total_profit': total_profit
-        })
-        
-        products_db.append(d)
-        bot.send_message(message.chat.id, f"✅ تم الحفظ! تكلفة القطعة: {unit_cost:.2f} د.ل", reply_markup=manufacturing_home())
-        del user_steps[message.from_user.id]
-    except:
-        bot.send_message(message.chat.id, "⚠️ أدخل سعراً صحيحاً.")
-        bot.register_next_step_handler(message, final_calc)
+        # --- الحسابات التلقائية ---
+        unit_cost = data['c1'] + data['c2'] + data['c3'] + data['c4'] + data['c5'] + data['c6'] + data['c7']
+        total_cost = unit_cost * data['qty']
+        total_sell = sell_price * data['qty']
+        unit_profit = sell_price - unit_cost
+        total_profit = unit_profit * data['qty']
 
-# ==========================================
-# مراجعة المنتجات (بحث، تفاصيل، حذف)
-# ==========================================
+        product = {
+            **data,
+            'sell_price': sell_price,
+            'unit_cost': unit_cost,
+            'total_cost': total_cost,
+            'total_sell': total_sell,
+            'unit_profit': unit_profit,
+            'total_profit': total_profit
+        }
+        
+        products_db.append(product)
+        bot.send_message(message.chat.id, "✅ تم حفظ المنتج وإجراء كافة الحسابات بنجاح!", reply_markup=manufacturing_menu())
+    except Exception as e:
+        bot.send_message(message.chat.id, "❌ حدث خطأ في البيانات، حاول مرة أخرى.")
+
+# --- مراجعة المنتجات والبحث ---
 @bot.message_handler(func=lambda m: m.text == '🔍 مراجعة منتج تم تصنيعه')
-def search_start(message):
-    bot.send_message(message.chat.id, "🔍 ابحث بـ (الكود أو الصنف أو التاريخ):")
-    bot.register_next_step_handler(message, search_results)
+def search_product(message):
+    bot.send_message(message.chat.id, "🔍 ابحث بـ (الكود أو التاريخ أو الصنف):")
+    bot.register_next_step_handler(message, show_search_results)
 
-def search_results(message):
-    q = message.text
-    res = [p for p in products_db if q in [p['code'], p['category'], p['date']]]
-    if not res: return bot.send_message(message.chat.id, "❌ لم يتم العثور على نتائج.")
+def show_search_results(message):
+    query = message.text
+    results = [p for p in products_db if query in [p['code'], p['date'], p['category']]]
     
-    for p in res:
-        txt = (f"📋 **بيانات المنتج:**\nالصنف: {p['category']}\nالكود: {p['code']}\nالتاريخ: {p['date']}\n"
-               f"المتجر: {p['store']}\nالخامة: {p['material']}\nالعدد: {p['qty']}\n"
-               f"------------------\n💰 تكلفة القطعة: {p['unit_cost']:.2f} د.ل\n📈 إجمالي الربح: {p['total_profit']:.2f} د.ل")
+    if not results:
+        bot.send_message(message.chat.id, "❌ لم يتم العثور على نتائج.")
+        return
+
+    for p in results:
+        summary = (f"📋 **بيانات المنتج:**\n"
+                   f"الصنف: {p['category']}\n"
+                   f"الكود: {p['code']}\n"
+                   f"التاريخ: {p['date']}\n"
+                   f"المتجر: {p['store']}\n"
+                   f"الخامة: {p['material']}\n"
+                   f"العدد: {p['qty']}\n"
+                   f"------------------\n"
+                   f"💰 تكلفة القطعة: {p['unit_cost']:.2f} د.ل\n"
+                   f"📈 إجمالي الربح: {p['total_profit']:.2f} د.ل")
         
-        mk = types.InlineKeyboardMarkup()
-        mk.add(types.InlineKeyboardButton("📄 عرض التفاصيل", callback_data=f"det_{p['code']}"))
-        mk.add(types.InlineKeyboardButton("🗑️ حذف الصنف", callback_data=f"askdel_{p['code']}"))
-        bot.send_message(message.chat.id, txt, reply_markup=mk, parse_mode="Markdown")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("📄 عرض باقي التفاصيل", callback_data=f"details_{p['code']}"))
+        markup.add(types.InlineKeyboardButton("🗑️ حذف الصنف", callback_data=f"delete_{p['code']}"))
+        bot.send_message(message.chat.id, summary, reply_markup=markup, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
+def handle_query(call):
     code = call.data.split('_')[1]
-    p = next((i for i in products_db if i['code'] == code), None)
-    
-    if call.data.startswith("det_") and p:
-        full_info = (f"📸 **تفاصيل شاملة لـ {p['code']}:**\n"
-                     f"- قماش: {p['c1']} | فازلين: {p['c2']} | أزرار: {p['c3']}\n"
-                     f"- خياطة: {p['c4']} | تطريز: {p['c5']} | ملحقات: {p['c6']}\n"
-                     f"- تصوير: {p['c7']}\n------------------\n"
-                     f"💵 سعر البيع: {p['sell_p']:.2f}\n💰 إجمالي التكلفة: {p['total_cost']:.2f}\n"
-                     f"📊 إجمالي المبيعات: {p['total_sell']:.2f}\n📉 ربح القطعة: {p['unit_profit']:.2f}")
-        bot.send_photo(call.message.chat.id, p['photo'], caption=full_info)
+    product = next((p for p in products_db if p['code'] == code), None)
 
-    elif call.data.startswith("askdel_"):
-        mk = types.InlineKeyboardMarkup()
-        mk.add(types.InlineKeyboardButton("✅ نعم متأكد", callback_data=f"confirmdel_{code}"),
-               types.InlineKeyboardButton("❌ لا، إلغاء", callback_data="cancel_del"))
-        bot.send_message(call.message.chat.id, f"⚠️ هل أنت متأكد من حذف {code}؟", reply_markup=mk)
+    if call.data.startswith("details_") and product:
+        details = (f"📸 **بيانات المنتج الكاملة:**\n"
+                   f"الصنف: {product['category']}\nالكود: {product['code']}\nالعدد: {product['qty']}\n"
+                   f"قماش: {product['c1']} | فازلين: {product['c2']} | أزرار: {product['c3']}\n"
+                   f"خياطة: {product['c4']} | تطريز: {product['c5']} | ملحقات: {product['c6']}\n"
+                   f"تصوير: {product['c7']}\nالتاريخ: {product['date']}\nالمتجر: {product['store']}\n"
+                   f"الخامة: {product['material']}\n"
+                   f"------------------\n"
+                   f"💰 تكلفة القطعة: {product['unit_cost']:.2f}\n"
+                   f"💵 إجمالي التكلفة: {product['total_cost']:.2f}\n"
+                   f"🏷️ سعر بيع القطعة: {product['sell_price']:.2f}\n"
+                   f"📊 سعر بيع إجمالي القطع: {product['total_sell']:.2f}\n"
+                   f"📉 الربح للقطعة: {product['unit_profit']:.2f}\n"
+                   f"📈 إجمالي الربح: {product['total_profit']:.2f}")
+        bot.send_photo(call.message.chat.id, product['photo'], caption=details)
 
-    elif call.data.startswith("confirmdel_"):
+    elif call.data.startswith("delete_"):
         global products_db
-        products_db = [i for i in products_db if i['code'] != code]
-        bot.edit_message_text("✅ تم حذف الصنف نهائياً.", call.message.chat.id, call.message.message_id)
+        products_db = [p for p in products_db if p['code'] != code]
+        bot.answer_callback_query(call.id, "✅ تم الحذف")
+        bot.edit_message_text("❌ تم حذف هذا المنتج من السجلات.", call.message.chat.id, call.message.message_id)
 
-@bot.message_handler(func=lambda m: m.text == '🔙 العودة')
-def go_back(message):
-    bot.send_message(message.chat.id, "الرئيسية:", reply_markup=main_menu())
+@bot.message_handler(func=lambda m: m.text == '🔙 العودة للقائمة الرئيسية')
+def back_home(message):
+    bot.send_message(message.chat.id, "القائمة الرئيسية:", reply_markup=main_menu())
 
 if __name__ == "__main__":
     keep_alive()
